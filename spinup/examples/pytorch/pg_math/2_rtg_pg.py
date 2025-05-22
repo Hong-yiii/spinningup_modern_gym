@@ -21,18 +21,18 @@ def reward_to_go(rews):
         rtgs[i] = rews[i] + (rtgs[i+1] if i+1 < n else 0)
     return rtgs
 
-def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2, 
+def train(env_name='HalfCheetah-v4', hidden_sizes=[32], lr=1e-2, 
           epochs=50, batch_size=5000, render=False):
 
     # make environment, check spaces, get obs / act dims
     env = gym.make(env_name)
     assert isinstance(env.observation_space, Box), \
         "This example only works for envs with continuous state spaces."
-    assert isinstance(env.action_space, Discrete), \
-        "This example only works for envs with discrete action spaces."
+    assert isinstance(env.action_space, Box), \
+        "This example only works for envs with continuous action spaces (Mujoco)."
 
     obs_dim = env.observation_space.shape[0]
-    n_acts = env.action_space.n
+    n_acts = env.action_space.shape[0]
 
     # make core of policy network
     logits_net = mlp(sizes=[obs_dim]+hidden_sizes+[n_acts])
@@ -40,15 +40,20 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
     # make function to compute action distribution
     def get_policy(obs):
         logits = logits_net(obs)
-        return Categorical(logits=logits)
+        # For continuous action spaces, use a Gaussian policy
+        mu = logits
+        log_std = torch.zeros_like(mu)  # You may want to make log_std a parameter for more advanced usage
+        std = torch.exp(log_std)
+        return torch.distributions.Normal(mu, std)
 
     # make action selection function (outputs int actions, sampled from policy)
     def get_action(obs):
-        return get_policy(obs).sample().item()
+        return get_policy(obs).sample().numpy()
 
     # make loss function whose gradient, for the right data, is policy gradient
     def compute_loss(obs, act, weights):
-        logp = get_policy(obs).log_prob(act)
+        dist = get_policy(obs)
+        logp = dist.log_prob(act).sum(axis=-1)
         return -(logp * weights).mean()
 
     # make optimizer
@@ -113,7 +118,7 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
         # take a single policy gradient update step
         optimizer.zero_grad()
         batch_loss = compute_loss(obs=torch.as_tensor(batch_obs, dtype=torch.float32),
-                                  act=torch.as_tensor(batch_acts, dtype=torch.int32),
+                                  act=torch.as_tensor(batch_acts, dtype=torch.float32),
                                   weights=torch.as_tensor(batch_weights, dtype=torch.float32)
                                   )
         batch_loss.backward()
@@ -129,9 +134,9 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env_name', '--env', type=str, default='CartPole-v0')
+    parser.add_argument('--env_name', '--env', type=str, default='HalfCheetah-v4')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--lr', type=float, default=1e-2)
     args = parser.parse_args()
-    print('\nUsing reward-to-go formulation of policy gradient.\n')
+    print('\nUsing reward-to-go formulation of policy gradient with Mujoco (HalfCheetah-v4).\n')
     train(env_name=args.env_name, render=args.render, lr=args.lr)
