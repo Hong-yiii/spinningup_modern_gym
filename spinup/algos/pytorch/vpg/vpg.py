@@ -17,8 +17,10 @@ class VPGBuffer:
     """
 
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
-        self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
+        obs_shape = tuple(core.combined_shape(size, obs_dim))
+        act_shape = tuple(core.combined_shape(size, act_dim))
+        self.obs_buf = np.zeros(obs_shape, dtype=np.float32)
+        self.act_buf = np.zeros(act_shape, dtype=np.float32)
         self.adv_buf = np.zeros(size, dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
         self.ret_buf = np.zeros(size, dtype=np.float32)
@@ -77,7 +79,8 @@ class VPGBuffer:
         assert self.ptr == self.max_size    # buffer has to be full before you can get
         self.ptr, self.path_start_idx = 0, 0
         # the next two lines implement the advantage normalization trick
-        adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
+        stats = mpi_statistics_scalar(self.adv_buf)
+        adv_mean, adv_std = stats[0], stats[1]
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
                     adv=self.adv_buf, logp=self.logp_buf)
@@ -250,6 +253,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
         pi_optimizer.step()
 
         # Value function learning
+        loss_v = None
         for i in range(train_v_iters):
             vf_optimizer.zero_grad()
             loss_v = compute_loss_v(data)
@@ -259,10 +263,11 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
 
         # Log changes from update
         kl, ent = pi_info['kl'], pi_info_old['ent']
+        final_loss_v = loss_v.item() if loss_v is not None else v_l_old
         logger.store(LossPi=pi_l_old, LossV=v_l_old,
                      KL=kl, Entropy=ent,
                      DeltaLossPi=(loss_pi.item() - pi_l_old),
-                     DeltaLossV=(loss_v.item() - v_l_old))
+                     DeltaLossV=(final_loss_v - v_l_old))
 
     # Prepare for interaction with environment
     start_time = time.time()

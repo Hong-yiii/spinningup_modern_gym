@@ -9,7 +9,13 @@ import json
 import joblib
 import shutil
 import numpy as np
-import tensorflow as tf
+# Make TensorFlow import optional
+try:
+    import tensorflow as tf
+    TF_AVAILABLE = True
+except ImportError:
+    TF_AVAILABLE = False
+    tf = None
 import torch
 import os.path as osp, time, atexit, os
 import warnings
@@ -56,6 +62,9 @@ def restore_tf_graph(sess, fpath):
         A dictionary mapping from keys to tensors in the computation graph
         loaded from ``fpath``. 
     """
+    if not TF_AVAILABLE:
+        raise ImportError("TensorFlow is not available. Install TensorFlow to use this function.")
+    
     tf.saved_model.loader.load(
                 sess,
                 [tf.saved_model.tag_constants.SERVING],
@@ -209,6 +218,9 @@ class Logger:
             outputs (dict): A dictionary that maps from keys of your choice
                 to the outputs from your computation graph.
         """
+        if not TF_AVAILABLE:
+            raise ImportError("TensorFlow is not available. Install TensorFlow to use this function.")
+        
         self.tf_saver_elements = dict(session=sess, inputs=inputs, outputs=outputs)
         self.tf_saver_info = {'inputs': {k:v.name for k,v in inputs.items()},
                               'outputs': {k:v.name for k,v in outputs.items()}}
@@ -218,6 +230,10 @@ class Logger:
         Uses simple_save to save a trained model, plus info to make it easy
         to associated tensors to variables after restore. 
         """
+        if not TF_AVAILABLE:
+            self.log('Warning: TensorFlow not available, skipping TF model save.', color='red')
+            return
+            
         if proc_id()==0:
             assert hasattr(self, 'tf_saver_elements'), \
                 "First have to setup saving with self.setup_tf_saver"
