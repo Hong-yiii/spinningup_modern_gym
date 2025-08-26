@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import torch
 from torch.optim import Adam
-import gym
+import gymnasium as gym
 import time
 import spinup.algos.pytorch.td3.core as core
 from spinup.algos.pytorch.td3.td3 import td3 as true_td3
@@ -203,53 +203,56 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     def compute_loss_q(data):
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
 
-        # Q-values
+        # Q-values (determined by critic network)
         #######################
         #                     #
         #   YOUR CODE HERE    #
         #                     #
-        #######################
-        # q1 = 
-        # q2 = 
+        ####################### 
+        q1 = ac.q1(o, a).squeeze(-1)
+        q2 = ac.q2(o, a).squeeze(-1)
 
-        # Target policy smoothing
-        #######################
-        #                     #
-        #   YOUR CODE HERE    #
-        #                     #
-        #######################
+        with torch.no_grad():
+            # Target policy smoothing
+            a2 = ac_targ.pi(o2)
+            
+            # Add clipped noise to target actions
+            noise = target_noise * torch.randn_like(a2)
+            noise = torch.clamp(noise, -noise_clip, noise_clip)
+            a2 = torch.clamp(a2 + noise, -act_limit, act_limit)
 
-        # Target Q-values
-        #######################
-        #                     #
-        #   YOUR CODE HERE    #
-        #                     #
-        #######################
+            # Target Q-values
+            q1_targ = ac_targ.q1(o2, a2).squeeze(-1)
+            q2_targ = ac_targ.q2(o2, a2).squeeze(-1)
+            
+            # Use min of both Q-targets (TD3's twin trick)
+            q_targ = torch.min(q1_targ, q2_targ)
+            
+            # Bellman backup for Q functions
+            backup = r + gamma * (1 - d) * q_targ
 
-        # MSE loss against Bellman backup
-        #######################
-        #                     #
-        #   YOUR CODE HERE    #
-        #                     #
-        #######################
-        # loss_q1 = 
-        # loss_q2 = 
-        # loss_q = 
+        # MSE loss against Bellman backup 
+        # what we are doing here is training the critic network to predict the Q-value of the next state-action pair (using past data)
+        loss_q1 = ((q1 - backup)**2).mean()
+        loss_q2 = ((q2 - backup)**2).mean()
+        # this can be summed as there is no dependency between the two q-values in the back propagation
+        # can only run optimizer which is more efficient
+        loss_q = loss_q1 + loss_q2
 
         # Useful info for logging
         loss_info = dict(Q1Vals=q1.detach().numpy(),
-                         Q2Vals=q2.detach().numpy())
+                        Q2Vals=q2.detach().numpy())
 
         return loss_q, loss_info
 
-    # Set up function for computing TD3 pi loss
+    # Set up function for computing TD3 pi loss (actor network)
     def compute_loss_pi(data):
-        #######################
-        #                     #
-        #   YOUR CODE HERE    #
-        #                     #
-        #######################
-        # loss_pi = 
+        o = data['obs']
+        
+        # Compute policy loss (using q1 network)
+        # what we are doing here is training the actor network to predict the action that will maximize the q-value of the next state-action pair (using past data)
+        loss_pi = -ac.q1(o, ac.pi(o)).mean()
+
         return loss_pi
 
     #=========================================================================#
@@ -311,10 +314,14 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     def test_agent():
         for j in range(num_test_episodes):
-            o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
+            o, _ = test_env.reset()
+            test_env.render()
+            d, ep_ret, ep_len = False, 0, 0
             while not(d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
-                o, r, d, _ = test_env.step(get_action(o, 0))
+                o, r, d, truncated, _ = test_env.step(get_action(o, 0))
+                test_env.render()
+                d = d or truncated
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
@@ -322,7 +329,9 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Prepare for interaction with environment
     total_steps = steps_per_epoch * epochs
     start_time = time.time()
-    o, ep_ret, ep_len = env.reset(), 0, 0
+    o, _ = env.reset()
+    env.render()
+    ep_ret, ep_len = 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
@@ -336,7 +345,9 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             a = env.action_space.sample()
 
         # Step the env
-        o2, r, d, _ = env.step(a)
+        o2, r, d, truncated, _ = env.step(a)
+        env.render()
+        d = d or truncated
         ep_ret += r
         ep_len += 1
 
@@ -355,7 +366,9 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         # End of trajectory handling
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpLen=ep_len)
-            o, ep_ret, ep_len = env.reset(), 0, 0
+            o, _ = env.reset()
+            env.render()
+            ep_ret, ep_len = 0, 0
 
         # Update handling
         if t >= update_after and t % update_every == 0:
@@ -391,7 +404,7 @@ def td3(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
+    parser.add_argument('--env', type=str, default='HalfCheetah-v5')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--exp_name', type=str, default='ex13-td3')
     parser.add_argument('--use_soln', action='store_true')
@@ -401,7 +414,7 @@ if __name__ == '__main__':
     logger_kwargs = setup_logger_kwargs(args.exp_name + '-' + args.env.lower(), args.seed)
 
     all_kwargs = dict(
-        env_fn=lambda : gym.make(args.env), 
+        env_fn=lambda : gym.make(args.env, render_mode="human"), 
         actor_critic=core.MLPActorCritic,
         ac_kwargs=dict(hidden_sizes=[128,128]), 
         max_ep_len=150,
