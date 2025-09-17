@@ -1,6 +1,6 @@
 from spinup.algos.pytorch.ddpg.core import mlp, MLPActorCritic
 from spinup.utils.run_utils import ExperimentGrid
-from spinup import ddpg_pytorch as ddpg
+from spinup.algos.pytorch.ddpg.ddpg import ddpg
 import numpy as np
 import torch
 import torch.nn as nn
@@ -64,7 +64,7 @@ class BuggedMLPActorCritic(nn.Module):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
+    parser.add_argument('--env', type=str, default='InvertedPendulum-v4')
     parser.add_argument('--h', type=int, default=300)
     parser.add_argument('--l', type=int, default=1)
     parser.add_argument('--num_runs', '-n', type=int, default=3)
